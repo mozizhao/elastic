@@ -1,5 +1,7 @@
+import logging
 import os
 import statistics
+import subprocess
 import sys
 import time
 import torch
@@ -29,9 +31,10 @@ python -c "import torch;print(torch.cuda.nccl.version())
 """
 
 BATCH_SIZE = 512
-EPOCHS = 1
+EPOCHS = 1000
 
 if __name__ == "__main__":
+
     batch_times = []
 
     # 0. set up distributed device
@@ -41,10 +44,19 @@ if __name__ == "__main__":
     dist.init_process_group(backend="nccl")
     device = torch.device("cuda", local_rank)
     arch = sys.argv[2]
-    if len(sys.argv) > 3:
-        BATCH_SIZE = int(sys.argv[3])
+    BATCH_SIZE = int(sys.argv[3])
+    jid = sys.argv[4]
 
-    print(f"[init] == local rank: {local_rank}, model: {arch}, global rank: {rank} ==")
+    if not os.path.exists(f'./{jid}'):
+        os.makedirs(f'./{jid}')
+
+    logging.basicConfig(
+        filename=f'./{jid}/train.log',
+        filemode='a',
+        format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
+        datefmt='%H:%M:%S',
+        level=logging.DEBUG
+    )
 
     # 1. define network
     model = torchvision.models.__dict__[arch]()
@@ -52,7 +64,7 @@ if __name__ == "__main__":
     # DistributedDataParallel
     model = DDP(model, device_ids=[local_rank], output_device=local_rank)
 
-    trainset = torchvision.datasets.CIFAR100(root="./", train=True, download=True, transform=transforms.ToTensor())
+    trainset = torchvision.datasets.CIFAR10(root="./", train=True, download=True, transform=transforms.ToTensor())
     # DistributedSampler
     # we test single Machine with 2 GPUs
     # so the [batch size] for each process is 256 / 2 = 128
@@ -77,7 +89,7 @@ if __name__ == "__main__":
     # 4. start to train
     model.train()
 
-    for ep in range(1, EPOCHS + 1):
+    for ep in range(0, EPOCHS):
         train_loss = correct = total = 0
         # set sampler
         train_loader.sampler.set_epoch(ep)
@@ -100,7 +112,7 @@ if __name__ == "__main__":
             torch.cuda.synchronize()
 
             if rank == 0:
-                print(
+                logging.info(
                     "   == step: [{:3}/{}] [{}/{}] | loss: {:.3f} | acc: {:6.3f}% Cost: {}".format(
                         idx + 1,
                         len(train_loader),
@@ -112,11 +124,15 @@ if __name__ == "__main__":
                     )
                 )
                 batch_times.append(time.time() - batch_start)
+                progress = str(ep + ((idx+1) / len(train_loader)))
+                if not os.path.isfile(f"./{jid}/progress.dat"):
+                    subprocess.call(f'touch ./{jid}/progress.dat', shell=True)
+                subprocess.call(f'echo {progress} > ./{jid}/progress.dat', shell=True)
 
-        print("Epoch:", ep, " Cost:", time.time() - now)
+        logging.info(f"Epoch: {ep}, Cost: {time.time() - now}")
     if rank == 0:
-        print("\n            =======  Training Finished  ======= \n")
+        logging.info("=======  Training Finished  =======")
 
         batch_times.pop(0)
         batch_times.pop(-1)
-        print(f'mean iteration time:{statistics.mean(batch_times)}')
+        logging.info(f'mean iteration time:{statistics.mean(batch_times)}')
