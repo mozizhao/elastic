@@ -17,7 +17,7 @@ app.debug = True
 get_port_lock = threading.Lock()
 return_port_lock = threading.Lock()
 worker_jid_association = {}
-jid_worker_association = {}
+# jid_worker_association = {}
 job_process_association = {}
 jid_port_association = {}
 used_port_pools = []
@@ -63,16 +63,17 @@ def stop_job(jobs):
         pid = job_process_association[j]
         process = psutil.Process(pid)
         for proc in process.children(recursive=True):
+            logging.info(f"killing subprocess {proc} of job {j} with pid={pid}")
             proc.kill()
+        logging.info(f"killing main process of job {j} with pid={pid}")
         process.kill()
         # return the occupied port to the port pool.
         return_port(jid_port_association[j])
-        rm_progress(j)
+        # rm_progress(j)
 
         # delete association items
         job_process_association.pop(j)
-        jid_worker_association.pop(j)
-        job_process_association.pop(j)
+
         for w in [w for w in worker_jid_association if worker_jid_association[w] == j]:
             worker_jid_association.pop(w)
 
@@ -81,8 +82,8 @@ def collect_progress(jid):
     return float(subprocess.check_output(f"cat ./{jid}/progress.dat", shell=True).decode())
 
 
-def rm_progress(jid):
-    subprocess.call(f"rm -rf ./{jid}/progress.dat", shell=True)
+# def rm_progress(jid):
+#     subprocess.call(f"rm -rf ./{jid}/progress.dat", shell=True)
 
 
 def start_job(jid, job_type, batch_size, workers):
@@ -94,10 +95,17 @@ def start_job(jid, job_type, batch_size, workers):
     port = available_port()
     jid_port_association[jid] = port
 
-    p = subprocess.Popen(f"CUDA_VISIBLE_DEVICES={worker_str} python3 -m torch.distributed.launch --nproc_per_node {len(workers)} --master_port {port} ddp.py {job_type} {batch_size} {jid}", shell=True)
+    # p = subprocess.Popen(f"CUDA_VISIBLE_DEVICES={worker_str} python3 -m torch.distributed.launch --nproc_per_node {len(workers)} --master_port {port} ddp.py {job_type} {batch_size} {jid}", shell=True)
+    env = {
+        **os.environ,
+        "CUDA_VISIBLE_DEVICES": f"{worker_str}",
+    }
+    p = subprocess.Popen(["python3", "-m", "torch.distributed.launch", "--nproc_per_node", f"{len(workers)}", "--master_port", f"{port}", "ddp.py", f"{job_type}", f"{batch_size}", f"{jid}"], env=env, shell=False)
     logging.info(f"executed command: 'CUDA_VISIBLE_DEVICES={worker_str} python3 -m torch.distributed.launch --nproc_per_node {len(workers)} --master_port {port} ddp.py {job_type} {batch_size} {jid}'. Create training process [{p.pid}] for {jid}")
 
+    # jid_worker_association[jid] = []
     for w in workers:
+        # jid_worker_association[jid].append(w)
         worker_jid_association[w] = jid
     job_process_association[jid] = p.pid
 
@@ -141,4 +149,4 @@ if __name__ == '__main__':
         datefmt='%H:%M:%S',
         level=logging.DEBUG
     )
-    app.run(host='127.0.0.1', port=PORT)
+    app.run(host='0.0.0.0', port=PORT)
