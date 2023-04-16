@@ -293,13 +293,18 @@ def allocate(plan, prev_plan):
 
 
 def stop(related_old_jobs, host):
+    logging.info(f"send stop request with params: jobs={related_old_jobs}")
     ret = requests.post('http://' + host + ':' + str(CLIENT_PORT) + '/stop/', json={'jobs': related_old_jobs})
+    logging.info(f"receive stop response with return={ret.text}")
     assert ret.status_code == 200
 
 
 def progress(related_old_jobs, host):
     global available_jobs
+    logging.info(f"send progress request with params: jobs={related_old_jobs}")
     ret = requests.post('http://' + host + ':' + str(CLIENT_PORT) + '/progress/', json={'jobs': related_old_jobs})
+    logging.info(f"receive progress response with return={ret.text}")
+
     assert ret.status_code == 200
     for jid, prog in ret.json()['result'].items():
         available_jobs[jid]['progress'] += prog
@@ -307,10 +312,12 @@ def progress(related_old_jobs, host):
 
 def start(j, workers, host):
     global available_jobs
-    ret = requests.post('http://' + host + ':' + str(CLIENT_PORT) + '/start/', json={
+    params = {
         'job_id': j, 'job_type': available_jobs[j]['job_type'], 'batch_size': available_jobs[j]['batch_size'],
         'workers': workers,
-    })
+    }
+    logging.info(f"send start request with params: jobs={params}")
+    ret = requests.post('http://' + host + ':' + str(CLIENT_PORT) + '/start/', json=params)
     assert ret.status_code == 200
 
 
@@ -329,15 +336,20 @@ def proceed_placement_for_host(host, host_worker_result, prev_host_worker_result
             prev_jobs_info[jid].append(w)
 
     for j, workers in jobs_info.items():
-        if workers == prev_jobs_info.get(j):
-            continue
-        else:
+        if workers != prev_jobs_info.get(j):
             # at first, stop old jobs that occupy the workers used in the new job j
-            related_old_jobs = list(
-                set([prev_host_worker_result[host][w] for w in workers])) if prev_host_worker_result.get(host) else []
-            if not related_old_jobs:
-                stop(related_old_jobs, host)
+            related_old_jobs = []
+            if prev_host_worker_result.get(host):
+                for w in workers:
+                    if prev_host_worker_result[host].get(w):
+                        related_old_jobs.append(prev_host_worker_result[host][w])
 
+            related_old_jobs = list(set(related_old_jobs))
+            logging.info(f"for job {j}, {related_old_jobs} should be terminated.")
+            stop(related_old_jobs, host)
+
+    for j, workers in jobs_info.items():
+        if workers != prev_jobs_info.get(j):
             start(j, workers, host)
 
 
@@ -364,11 +376,11 @@ job_idx = 0
 available_jobs = {}
 job_stats = {}
 gpus_each_host = 4
-gpu_nums = {'t4': 4}
+gpu_nums = {'a10': 4}
 # gpu_types = ['v100', 'a10', 't4',]
-gpu_types = ['t4', ]
+gpu_types = ['a10', ]
 hosts_of_each_gpu_type = {
-    't4': ['localhost', ],
+    'a10': ['localhost', ],
     # 'a10': ['a10-a', 'a10-b', ],
     # 'v100': ['v100-a', 'v100-b', ],
 }
