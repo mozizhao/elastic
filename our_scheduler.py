@@ -376,13 +376,13 @@ job_idx = 0
 available_jobs = {}
 job_stats = {}
 gpus_each_host = 4
-gpu_nums = {'a10': 4}
-# gpu_types = ['v100', 'a10', 't4',]
+gpu_nums = {'a10': 4, 'v100': 4, 't4': 4, }
+# gpu_types = ['v100', 'a10', 't4', ]
 gpu_types = ['a10', ]
 hosts_of_each_gpu_type = {
-    'a10': ['localhost', ],
-    # 'a10': ['a10-a', 'a10-b', ],
-    # 'v100': ['v100-a', 'v100-b', ],
+    'a10': ['172.22.47.92', ],
+    't4': ['172.23.254.151', ],
+    'v100': ['172.23.254.152', ],
 }
 prev_host_result = {}
 prev_host_worker_result = {}
