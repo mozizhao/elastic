@@ -115,7 +115,7 @@ if __name__ == "__main__":
             total += targets.size(0)
             correct += torch.eq(outputs.argmax(dim=1), targets).sum().item()
 
-            # torch.cuda.synchronize()
+            torch.cuda.synchronize()
             if idx % 10 == 0:
                 progress = str(ep + ((idx + 1) / len(train_loader)))
                 if not os.path.isfile(f"./{jid}/progress.dat"):
