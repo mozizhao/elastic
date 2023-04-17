@@ -1,8 +1,10 @@
 import logging
 import os
+import signal
 import statistics
 import subprocess
 import sys
+import threading
 import time
 import torch
 import torch.distributed as dist
@@ -11,6 +13,8 @@ import torchvision
 import torchvision.transforms as transforms
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.optim as optim
+from pathlib import Path
+
 
 # curl https://raw.githubusercontent.com/GoogleCloudPlatform/compute-gpu-installation/main/linux/install_gpu_driver.py --output install_gpu_driver.py && sudo python3 install_gpu_driver.py && apt install python3-pip -y && pip3 install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu115
 
@@ -31,11 +35,10 @@ python -c "import torch;print(torch.cuda.nccl.version())
 """
 
 BATCH_SIZE = 512
-EPOCHS = 1000
+EPOCHS = 100
+
 
 if __name__ == "__main__":
-
-    batch_times = []
 
     # 0. set up distributed device
     rank = int(os.environ["RANK"])
@@ -47,16 +50,18 @@ if __name__ == "__main__":
     BATCH_SIZE = int(sys.argv[3])
     jid = sys.argv[4]
 
-    if not os.path.exists(f'./{jid}'):
+    if rank == 0 and not os.path.exists(f'./{jid}'):
         os.makedirs(f'./{jid}')
 
-    logging.basicConfig(
-        filename=f'./{jid}/train.log',
-        filemode='a',
-        format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
-        datefmt='%H:%M:%S',
-        level=logging.DEBUG
-    )
+        logging.basicConfig(
+            filename=f'./{jid}/train.log',
+            filemode='a',
+            format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
+            datefmt='%H:%M:%S',
+            level=logging.DEBUG
+        )
+    else:
+        time.sleep(0.2)
 
     # 1. define network
     model = torchvision.models.__dict__[arch]()
@@ -90,12 +95,13 @@ if __name__ == "__main__":
     model.train()
 
     for ep in range(0, EPOCHS):
+        # curr_ep = ep
         train_loss = correct = total = 0
         # set sampler
         train_loader.sampler.set_epoch(ep)
         now = time.time()
         for idx, (inputs, targets) in enumerate(train_loader):
-            batch_start = time.time()
+            # curr_batch = idx
 
             inputs, targets = inputs.to(device), targets.to(device)
             outputs = model(inputs)
@@ -109,30 +115,20 @@ if __name__ == "__main__":
             total += targets.size(0)
             correct += torch.eq(outputs.argmax(dim=1), targets).sum().item()
 
-            torch.cuda.synchronize()
-
-            if rank == 0:
-                logging.info(
-                    "   == step: [{:3}/{}] [{}/{}] | loss: {:.3f} | acc: {:6.3f}% Cost: {}".format(
-                        idx + 1,
-                        len(train_loader),
-                        ep,
-                        EPOCHS,
-                        train_loss / (idx + 1),
-                        100.0 * correct / total,
-                        time.time() - batch_start
-                    )
-                )
-                batch_times.append(time.time() - batch_start)
-                progress = str(ep + ((idx+1) / len(train_loader)))
+            # torch.cuda.synchronize()
+            if idx % 10 == 0:
+                progress = str(ep + ((idx + 1) / len(train_loader)))
                 if not os.path.isfile(f"./{jid}/progress.dat"):
-                    subprocess.call(f'touch ./{jid}/progress.dat', shell=True)
-                subprocess.call(f'echo {progress} > ./{jid}/progress.dat', shell=True)
+                    Path(f"./{jid}/progress.dat").touch()
+                prog_file = open(f"./{jid}/progress.dat", 'w')  # or 'a' to add text instead of truncate
+                prog_file.write(progress)
+                prog_file.close()
 
-        logging.info(f"Epoch: {ep}, Cost: {time.time() - now}")
-    if rank == 0:
-        logging.info("=======  Training Finished  =======")
-
-        batch_times.pop(0)
-        batch_times.pop(-1)
-        logging.info(f'mean iteration time:{statistics.mean(batch_times)}')
+        if rank == 0:
+            logging.info(f"Epoch: {ep}, Cost: {time.time() - now}")
+    # if rank == 0:
+    #     logging.info("=======  Training Finished  =======")
+    #
+    #     batch_times.pop(0)
+    #     batch_times.pop(-1)
+    #     logging.info(f'mean iteration time:{statistics.mean(batch_times)}')
