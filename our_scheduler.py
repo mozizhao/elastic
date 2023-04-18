@@ -43,11 +43,8 @@ def schedule():
         for i in range(gpu_nums[gpu_type] // all_job_limit):
             for job_id in available_jobs:
                 j_attr = available_jobs[job_id]
-                iter, job_type, batch_size = j_attr['iteration'] - j_attr['progress'], j_attr['job_type'], j_attr[
-                    'batch_size']
-                weight = iter * (cal_iteration_time(gpu_type, job_type, batch_size,
-                                                    all_job_limit) ** 2) / cal_iteration_time(gpu_type, job_type,
-                                                                                              batch_size, 1)
+                iter, job_type, batch_size = j_attr['iteration'] - j_attr['progress'], j_attr['job_type'], j_attr['batch_size']
+                weight = iter * (cal_iteration_time(gpu_type, job_type, batch_size, all_job_limit) ** 2) / cal_iteration_time(gpu_type, job_type, batch_size, 1)
 
                 graph.add_edge(f'{gpu_type}_{i}', job_id, weight=weight)
 
@@ -77,11 +74,8 @@ def schedule():
 
         for j in matching[gpu_type]:
             # if shrinkable jobs exist, shrink one of its GPU.
-            while worker_nums[j] > 1 and \
-                    iteration_time[gpu_type][available_jobs[j]['job_type']][available_jobs[j]['batch_size']][
-                        worker_nums[j]] > \
-                    iteration_time[gpu_type][available_jobs[j]['job_type']][available_jobs[j]['batch_size']][
-                        worker_nums[j] - 1]:
+            while worker_nums[j] > 1 and iteration_time[gpu_type][available_jobs[j]['job_type']][available_jobs[j]['batch_size']][worker_nums[j]] > \
+                    iteration_time[gpu_type][available_jobs[j]['job_type']][available_jobs[j]['batch_size']][worker_nums[j] - 1]:
                 worker_nums[j] -= 1
                 shrink_slots += 1
 
@@ -90,8 +84,7 @@ def schedule():
             unsched_jobs = sorted(
                 [jid for jid in available_jobs if jid not in scheduled_jobs],
                 # key=lambda j: cal_throughput(gpu_type, available_jobs[j]['job_type'], available_jobs[j]['batch_size'], 1) / (available_jobs[j]['iteration'] - available_jobs[j]['progress']),
-                key=lambda j: cal_throughput(gpu_type, available_jobs[j]['job_type'], available_jobs[j]['batch_size'],
-                                             1) / available_jobs[j]['iteration'],
+                key=lambda j: cal_throughput(gpu_type, available_jobs[j]['job_type'], available_jobs[j]['batch_size'], 1) / available_jobs[j]['iteration'],
                 reverse=True
             )
 
@@ -110,11 +103,8 @@ def schedule():
             sched_jobs = sorted(
                 list(filter(lambda j: worker_nums[j] > 1, matching.get(gpu_type))),
                 # key=lambda j: (cal_throughput(gpu_type, available_jobs[j]['job_type'], available_jobs[j]['batch_size'], worker_nums[j]) - cal_throughput(gpu_type, available_jobs[j]['job_type'], available_jobs[j]['batch_size'], worker_nums[j] - 1)) / (available_jobs[j]['iteration'] - available_jobs[j]['progress']),
-                key=lambda j: (cal_throughput(gpu_type, available_jobs[j]['job_type'], available_jobs[j]['batch_size'],
-                                              worker_nums[j]) - cal_throughput(gpu_type, available_jobs[j]['job_type'],
-                                                                               available_jobs[j]['batch_size'],
-                                                                               worker_nums[j] - 1)) / available_jobs[j][
-                                  'iteration'],
+                key=lambda j: (cal_throughput(gpu_type, available_jobs[j]['job_type'], available_jobs[j]['batch_size'], worker_nums[j]) -
+                               cal_throughput(gpu_type, available_jobs[j]['job_type'], available_jobs[j]['batch_size'], worker_nums[j] - 1)) / available_jobs[j]['iteration'],
                 reverse=False
             )
 
@@ -137,15 +127,12 @@ def schedule():
             # replace the jid by the job with minimum price given one worker
             unsched_jid = sorted(
                 unsched_jobs,
-                key=lambda j: cal_throughput(gpu_type, available_jobs[j]['job_type'], available_jobs[j]['batch_size'],
-                                             1) / (available_jobs[j]['iteration'] - available_jobs[j]['progress']),
+                key=lambda j: cal_throughput(gpu_type, available_jobs[j]['job_type'], available_jobs[j]['batch_size'], 1) / (available_jobs[j]['iteration'] - available_jobs[j]['progress']),
                 reverse=True
             )[0]
             # single-worker price of unsched_jid
             # desc_jct = cal_throughput(gpu_type, available_jobs[unsched_jid]['job_type'], available_jobs[unsched_jid]['batch_size'], 1) / (available_jobs[unsched_jid]['iteration'] - available_jobs[unsched_jid]['progress'])
-            desc_jct = cal_throughput(gpu_type, available_jobs[unsched_jid]['job_type'],
-                                      available_jobs[unsched_jid]['batch_size'], 1) / available_jobs[unsched_jid][
-                           'iteration']
+            desc_jct = cal_throughput(gpu_type, available_jobs[unsched_jid]['job_type'], available_jobs[unsched_jid]['batch_size'], 1) / available_jobs[unsched_jid]['iteration']
 
             if asc_jct < desc_jct:
 
@@ -307,14 +294,14 @@ def progress(related_old_jobs, host):
 
     assert ret.status_code == 200
     for jid, prog in ret.json()['result'].items():
-        available_jobs[jid]['progress'] += prog
+        available_jobs[jid]['progress'] = prog
 
 
 def start(j, workers, host):
     global available_jobs
     params = {
         'job_id': j, 'job_type': available_jobs[j]['job_type'], 'batch_size': available_jobs[j]['batch_size'],
-        'workers': workers,
+        'progress': available_jobs[j]['progress'], 'workers': workers,
     }
     logging.info(f"send start request with params: jobs={params}")
     ret = requests.post('http://' + host + ':' + str(CLIENT_PORT) + '/start/', json=params)
@@ -389,7 +376,7 @@ prev_host_worker_result = {}
 prev_jobs_location = {}
 prev_jobs_worker_location = {}
 t = 0
-iteration_time = {
+batch_time = {
     # 'k80': {
     #     'vgg19': {
     #         512: {1: 0.815, 2: 0.555, 3: 0.466, 4: 0.434, },
@@ -407,47 +394,93 @@ iteration_time = {
     # },
     't4': {
         'vgg19': {
-            512: {1: 0.3224, 2: 0.222, 3: 0.235, 4: 0.225, },
-            64: {1: 0.068, 2: 0.171, 3: 0.197, 4: 0.205, },
+            512: {1: 0.315, 2: 0.215, 3: 0.238, 4: 0.231, },
+            64: {1: 0.072, 2: 0.182, 3: 0.2, 4: 0.214, },
         },
         'resnet152': {
-            512: {1: 0.4556, 2: 0.2462, 3: 0.225, 4: 0.1728, },
-            64: {1: 0.119, 2: 0.123, 3: 0.13, 4: 0.133, },
+            512: {1: 0.365, 2: 0.222, 3: 0.185, 4: 0.171, },
+            64: {1: 0.119, 2: 0.133, 3: 0.14, 4: 0.144, },
         },
         'densenet121': {
-            512: {1: 0.194, 2: 0.11, 3: 0.09, 4: 0.087, },
-            64: {1: 0.075, 2: 0.075, 3: 0.077, 4: 0.078, },
+            512: {1: 0.167, 2: 0.12, 3: 0.1, 4: 0.1, },
+            64: {1: 0.097, 2: 0.093, 3: 0.09, 4: 0.086, },
         },
     },
     'a10': {
         'vgg19': {
-            512: {1: 0.121, 2: 0.0819, 3: 0.085, 4: 0.1098, },
-            64: {1: 0.027, 2: 0.056, 3: 0.071, 4: 0.105, },
+            512: {1: 0.123, 2: 0.082, 3: 0.085, 4: 0.088, },
+            64: {1: 0.0318, 2: 0.059, 3: 0.0689, 4: 0.0719, },
         },
         'resnet152': {
-            512: {1: 0.113, 2: 0.0795, 3: 0.0695, 4: 0.0765, },
-            64: {1: 0.042, 2: 0.051, 3: 0.051, 4: 0.064, },
+            512: {1: 0.118, 2: 0.091, 3: 0.082, 4: 0.079, },
+            64: {1: 0.07, 2: 0.072, 3: 0.0672, 4: 0.065, },
         },
         'densenet121': {
-            512: {1: 0.067, 2: 0.0461, 3: 0.044, 4: 0.041, },
-            64: {1: 0.041, 2: 0.040, 3: 0.038, 4: 0.039, },
+            512: {1: 0.075, 2: 0.063, 3: 0.06, 4: 0.063, },
+            64: {1: 0.06, 2: 0.0575, 3: 0.0584, 4: 0.0555, },
         },
     },
     'v100': {
         'vgg19': {
-            512: {1: 0.1, 2: 0.067, 3: 0.05, 4: 0.038, },
-            64: {1: 0.021, 2: 0.039, 3: 0.03, 4: 0.022, },
+            512: {1: 0.105, 2: 0.064, 3: 0.05, 4: 0.038, },
+            64: {1: 0.024, 2: 0.044, 3: 0.031, 4: 0.023, },
         },
         'resnet152': {
-            512: {1: 0.198, 2: 0.162, 3: 0.092, 4: 0.082, },
-            64: {1: 0.067, 2: 0.067, 3: 0.065, 4: 0.065, },
+            512: {1: 0.2, 2: 0.165, 3: 0.096, 4: 0.087, },
+            64: {1: 0.076, 2: 0.075, 3: 0.074, 4: 0.072, },
         },
         'densenet121': {
-            512: {1: 0.07, 2: 0.064, 3: 0.064, 4: 0.064, },
-            64: {1: 0.06, 2: 0.058, 3: 0.058, 4: 0.058, },
+            512: {1: 0.082, 2: 0.068, 3: 0.068, 4: 0.068, },
+            64: {1: 0.07, 2: 0.066, 3: 0.065, 4: 0.068, },
         },
     },
 }
+
+iteration_time = {
+    't4': {
+        'vgg19': {
+            512: {1: 37.4, 2: 25, 3: 26, 4: 24.5, },
+            64: {1: 63.6, 2: 149, 3: 159, 4: 172, },
+        },
+        'resnet152': {
+            512: {1: 43.5, 2: 25.2, 3: 20, 4: 18.2, },
+            64: {1: 89.2, 2: 103.4, 3: 104.2, 4: 111.8, },
+        },
+        'densenet121': {
+            512: {1: 22.3, 2: 14.5, 3: 11.5, 4: 13.6, },
+            64: {1: 77.8, 2: 70, 3: 68.2, 4: 66.4, },
+        },
+    },
+    'a10': {
+        'vgg19': {
+            512: {1: 16.1, 2: 10.2, 3: 9.7, 4: 9.1, },
+            64: {1: 29.8, 2: 47.5, 3: 51., 4: 55, },
+        },
+        'resnet152': {
+            512: {1: 15.4, 2: 10.6, 3: 9.2, 4: 8.5, },
+            64: {1: 58.1, 2: 53.4, 3: 48.7, 4: 53, },
+        },
+        'densenet121': {
+            512: {1: 11, 2: 7.8, 3: 7.2, 4: 6.8, },
+            64: {1: 50.4, 2: 46., 3: 43.4, 4: 44., },
+        },
+    },
+    'v100': {
+        'vgg19': {
+            512: {1: 16.3, 2: 9.9, 3: 7.3, 4: 5.6, },
+            64: {1: 23.1, 2: 25., 3: 25.5, 4: 20, },
+        },
+        'resnet152': {
+            512: {1: 27.1, 2: 20.6, 3: 13., 4: 11.5, },
+            64: {1: 61.3, 2: 63., 3: 60., 4: 59., },
+        },
+        'densenet121': {
+            512: {1: 13.6, 2: 13., 3: 11.7, 4: 10.9, },
+            64: {1: 56.1, 2: 72., 3: 68.5, 4: 64., },
+        },
+    },
+}
+
 
 if __name__ == '__main__':
     logging.basicConfig(
