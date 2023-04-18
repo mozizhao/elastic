@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 import random
 import signal
@@ -99,8 +100,8 @@ def start_job(jid, job_type, batch_size, workers, init_progress):
         **os.environ,
         "CUDA_VISIBLE_DEVICES": f"{worker_str}",
     }
-    p = subprocess.Popen(["python3", "-m", "torch.distributed.launch", "--nproc_per_node", f"{len(workers)}", "--master_port", f"{port}", "ddp.py", f"{job_type}", f"{batch_size}", f"{jid}", f"{init_progress}"], env=env, shell=False)
-    logging.info(f"executed command: 'CUDA_VISIBLE_DEVICES={worker_str} python3 -m torch.distributed.launch --nproc_per_node {len(workers)} --master_port {port} ddp.py {job_type} {batch_size} {jid} {init_progress}'. Create training process [{p.pid}] for {jid}")
+    p = subprocess.Popen(["python3", "-m", "torch.distributed.launch", "--nproc_per_node", f"{len(workers)}", "--master_port", f"{port}", "ddp.py", f"{job_type}", f"{int(math.ceil(batch_size / len(workers)))}", f"{jid}", f"{init_progress}"], env=env, shell=False)
+    logging.info(f"executed command: 'CUDA_VISIBLE_DEVICES={worker_str} python3 -m torch.distributed.launch --nproc_per_node {len(workers)} --master_port {port} ddp.py {job_type} {int(math.ceil(batch_size / len(workers)))} {jid} {init_progress}'. Create training process [{p.pid}] for {jid}")
 
     # jid_worker_association[jid] = []
     for w in workers:
