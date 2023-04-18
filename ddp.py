@@ -36,6 +36,7 @@ python -c "import torch;print(torch.cuda.nccl.version())
 
 BATCH_SIZE = 512
 EPOCHS = 100
+init_progress = 0.
 
 
 if __name__ == "__main__":
@@ -49,6 +50,7 @@ if __name__ == "__main__":
     arch = sys.argv[2]
     BATCH_SIZE = int(sys.argv[3])
     jid = sys.argv[4]
+    init_progress = float(sys.argv[5])
 
     if rank == 0 and not os.path.exists(f'./{jid}'):
         os.makedirs(f'./{jid}')
@@ -117,7 +119,7 @@ if __name__ == "__main__":
 
             torch.cuda.synchronize()
             if idx % 10 == 0:
-                progress = str(ep + ((idx + 1) / len(train_loader)))
+                progress = str(ep + ((idx + 1) / len(train_loader)) + init_progress)
                 if not os.path.isfile(f"./{jid}/progress.dat"):
                     Path(f"./{jid}/progress.dat").touch()
                 prog_file = open(f"./{jid}/progress.dat", 'w')  # or 'a' to add text instead of truncate
