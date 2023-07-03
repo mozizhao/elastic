@@ -129,7 +129,7 @@ def allocate(plan, prev_plan):
 
     # variables initialization
     for gpu_type in gpu_types:
-        for host in hosts_of_each_gpu_type:
+        for host in hosts_of_each_gpu_type[gpu_type]:
             # used_host_worker_nums[host] = 0
             host_result[host] = []
             host_worker_result[host] = {}
@@ -148,7 +148,7 @@ def allocate(plan, prev_plan):
         count = 0
         for j in jobs:
             host_result[host].append(j)
-            for _ in plan[j]['num']:
+            for _ in range(plan[j]['num']):
                 host_worker_result[host][count] = j
                 count += 1
 
@@ -366,14 +366,14 @@ iteration_time = {
 
 
 if __name__ == '__main__':
-    logging.basicConfig(
-        filename='scheduler.log',
-        filemode='a',
-        format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
-        datefmt='%H:%M:%S',
-        level=logging.DEBUG
-    )
     try:
+        logging.basicConfig(
+            filename='./scheduler.log',
+            filemode='a',
+            format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
+            datefmt='%H:%M:%S',
+            level=logging.DEBUG
+        )
         for t in range(100000):
             # update progress of jobs running on hosts according to the prev_plan
             update_progress_threads = []
@@ -412,7 +412,7 @@ if __name__ == '__main__':
             prev_plan = copy.deepcopy(plan)
 
             # sleep for round_len of time
-            time.sleep(round_len)
+            time.sleep(3)
 
             # break
         logging.info(job_stats)
@@ -424,4 +424,5 @@ if __name__ == '__main__':
         logging.info('total jct', total_jct)
 
     except Exception as e:
-        logging.error(e)
+        logging.exception(e)
+        # logging.error(e)
