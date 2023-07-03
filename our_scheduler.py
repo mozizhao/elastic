@@ -26,30 +26,38 @@ def arrive(t):
 
 def schedule():
     # bipartite matching based method, 20230106
-    global all_job_limit, available_jobs
+    global all_job_limit
 
     if len(available_jobs) <= 0:
         return {}
 
+    slot_size = 0
+    if sum(gpu_nums.values()) / len(available_jobs) <= 1.5:
+        slot_size = 1
+    elif sum(gpu_nums.values()) / len(available_jobs) >= 3.:
+        slot_size = 4
+    else:
+        slot_size = 2
+
     # first, find bipartite matching between single-worker jobs and gpus
     graph = networkx.Graph()
     for gpu_type in gpu_types:
-        for i in range(gpu_nums[gpu_type] // int(all_job_limit)):
+        for i in range(gpu_nums[gpu_type] // slot_size):
             graph.add_node(f'{gpu_type}_{i}', bipartite=0)
     for job_id in available_jobs:
         graph.add_node(job_id, bipartite=1)
 
     for gpu_type in gpu_types:
-        for i in range(gpu_nums[gpu_type] // all_job_limit):
+        for i in range(gpu_nums[gpu_type] // slot_size):
             for job_id in available_jobs:
                 j_attr = available_jobs[job_id]
-                iter, job_type, batch_size = j_attr['iteration'] - j_attr['progress'], j_attr['job_type'], j_attr['batch_size']
-                weight = iter * (cal_iteration_time(gpu_type, job_type, batch_size, all_job_limit) ** 2) / cal_iteration_time(gpu_type, job_type, batch_size, 1)
+                epoch, job_type, batch_size = j_attr['iteration'] - j_attr['progress'], j_attr['job_type'], j_attr['batch_size']
+                weight = epoch * (cal_epoch_time(gpu_type, job_type, batch_size, slot_size) ** 2) / cal_epoch_time(gpu_type, job_type, batch_size, 1)
 
                 graph.add_edge(f'{gpu_type}_{i}', job_id, weight=weight)
 
     raw_single_matching = networkx.bipartite.minimum_weight_full_matching(graph)
-    worker_nums, matching = {}, {}
+    worker_nums, matching, job_located_type = {}, {}, {}
 
     for k, v in raw_single_matching.items():
         if '_' in k and k.split('_')[0] in gpu_types:
@@ -57,114 +65,48 @@ def schedule():
             if not matching.get(gpu_type):
                 matching[gpu_type] = []
             matching[gpu_type].append(jid)
-            worker_nums[jid] = all_job_limit
+            worker_nums[jid] = slot_size
+            job_located_type[jid] = gpu_type
 
     # list all scheduled jobs
     scheduled_jobs = []
-    for type in gpu_types:
-        if matching.get(type):
-            scheduled_jobs.extend(matching[type])
-
-    # iterates GPUs from high-end to low-end
     for gpu_type in gpu_types:
-        if not matching.get(gpu_type):
-            continue
+        if matching.get(gpu_type):
+            scheduled_jobs.extend(matching[gpu_type])
 
-        shrink_slots = 0
+    if slot_size > 1:
+        # if all jobs are scheduled, stop it.
+        while len(available_jobs) > len(scheduled_jobs):
+            j1 = sorted([j for j in scheduled_jobs if worker_nums[j] > 1], key=(lambda j: price_j1(j, job_located_type[j], worker_nums[j])), reverse=False)[0]
+            gpu_type = job_located_type[j1]
+            j2 = sorted(set(available_jobs.keys()) - set(scheduled_jobs), key=(lambda j: price_j2(j, gpu_type, slot_size)), reverse=True)[0]
 
-        for j in matching[gpu_type]:
-            # if shrinkable jobs exist, shrink one of its GPU.
-            while worker_nums[j] > 1 and iteration_time[gpu_type][available_jobs[j]['job_type']][available_jobs[j]['batch_size']][worker_nums[j]] > \
-                    iteration_time[gpu_type][available_jobs[j]['job_type']][available_jobs[j]['batch_size']][worker_nums[j] - 1]:
-                worker_nums[j] -= 1
-                shrink_slots += 1
-
-        # pick jobs that can benefit most from one GPU (progress most from this single GPU)
-        for _ in range(shrink_slots):
-            unsched_jobs = sorted(
-                [jid for jid in available_jobs if jid not in scheduled_jobs],
-                # key=lambda j: cal_throughput(gpu_type, available_jobs[j]['job_type'], available_jobs[j]['batch_size'], 1) / (available_jobs[j]['iteration'] - available_jobs[j]['progress']),
-                key=lambda j: cal_throughput(gpu_type, available_jobs[j]['job_type'], available_jobs[j]['batch_size'], 1) / available_jobs[j]['iteration'],
-                reverse=True
-            )
-
-            if not unsched_jobs:
+            if price_j1(j1, gpu_type, worker_nums[j1]) > price_j2(j2, gpu_type, slot_size):
                 break
-
-            unsched_jid = unsched_jobs[0]
-
-            worker_nums[unsched_jid] = 1
-            scheduled_jobs.append(unsched_jid)
-            matching[gpu_type].append(unsched_jid)
-
-        # turn over GPUs from low-efficiency job to high-efficiency job
-        while True:
-            # evaluate how the JCT of jobs degrades if one GPU is deducted.
-            sched_jobs = sorted(
-                list(filter(lambda j: worker_nums[j] > 1, matching.get(gpu_type))),
-                # key=lambda j: (cal_throughput(gpu_type, available_jobs[j]['job_type'], available_jobs[j]['batch_size'], worker_nums[j]) - cal_throughput(gpu_type, available_jobs[j]['job_type'], available_jobs[j]['batch_size'], worker_nums[j] - 1)) / (available_jobs[j]['iteration'] - available_jobs[j]['progress']),
-                key=lambda j: (cal_throughput(gpu_type, available_jobs[j]['job_type'], available_jobs[j]['batch_size'], worker_nums[j]) -
-                               cal_throughput(gpu_type, available_jobs[j]['job_type'], available_jobs[j]['batch_size'], worker_nums[j] - 1)) / available_jobs[j]['iteration'],
-                reverse=False
-            )
-
-            if not sched_jobs:
-                break
-            # pick one job that is already selected, with maximum price descend by removing one worker
-            jid = sched_jobs[0]
-            # maximum descending price from jid
-            # asc_jct = (cal_throughput(gpu_type, available_jobs[jid]['job_type'], available_jobs[jid]['batch_size'], worker_nums[jid]) - cal_throughput(gpu_type, available_jobs[jid]['job_type'], available_jobs[jid]['batch_size'], worker_nums[jid] - 1)) / (available_jobs[jid]['iteration'] - available_jobs[jid]['progress'])
-            asc_jct = (cal_throughput(gpu_type, available_jobs[jid]['job_type'], available_jobs[jid]['batch_size'],
-                                      worker_nums[jid]) - cal_throughput(gpu_type, available_jobs[jid]['job_type'],
-                                                                         available_jobs[jid]['batch_size'],
-                                                                         worker_nums[jid] - 1)) / available_jobs[jid][
-                          'iteration']
-
-            unsched_jobs = [j for j in available_jobs if j not in scheduled_jobs]
-
-            if not unsched_jobs:
-                break
-            # replace the jid by the job with minimum price given one worker
-            unsched_jid = sorted(
-                unsched_jobs,
-                key=lambda j: cal_throughput(gpu_type, available_jobs[j]['job_type'], available_jobs[j]['batch_size'], 1) / (available_jobs[j]['iteration'] - available_jobs[j]['progress']),
-                reverse=True
-            )[0]
-            # single-worker price of unsched_jid
-            # desc_jct = cal_throughput(gpu_type, available_jobs[unsched_jid]['job_type'], available_jobs[unsched_jid]['batch_size'], 1) / (available_jobs[unsched_jid]['iteration'] - available_jobs[unsched_jid]['progress'])
-            desc_jct = cal_throughput(gpu_type, available_jobs[unsched_jid]['job_type'], available_jobs[unsched_jid]['batch_size'], 1) / available_jobs[unsched_jid]['iteration']
-
-            if asc_jct < desc_jct:
-
-                worker_nums[jid] -= 1
-                worker_nums[unsched_jid] = 1
-                scheduled_jobs.append(unsched_jid)
-                matching[gpu_type].append(unsched_jid)
             else:
-                break
+                worker_nums[j1] -= 1
+                worker_nums[j2] = 1
+                scheduled_jobs.append(j2)
+                matching[gpu_type].append(j2)
+                job_located_type[j2] = gpu_type
+    else:
+        pass
 
     result = {}
+    for jid in scheduled_jobs:
+        result[jid] = {'type': job_located_type[jid], 'job_type': available_jobs[jid]['job_type'], 'num': worker_nums[jid], 'bs': available_jobs[jid]['batch_size']}
 
-    for gpu_type in gpu_types:
-        if not matching.get(gpu_type):
-            continue
-
-        for jid in matching[gpu_type]:
-            assert worker_nums[jid] != 0
-
-            result[jid] = {'type': gpu_type, 'job_type': available_jobs[jid]['job_type'], 'num': worker_nums[jid],
-                           'bs': available_jobs[jid]['batch_size']}
-
+    assert sorted(list(result.keys())) == sorted(scheduled_jobs)
     return result
 
 
 # calculates the iteration time of iteration time or the fitted iteration time, depending on the user's choice.
-def cal_iteration_time(gpu_type, job_type, batch_size, gpu_count):
+def cal_epoch_time(gpu_type, job_type, batch_size, gpu_count):
     return iteration_time[gpu_type][job_type][batch_size][gpu_count] / round_len
 
 
 def cal_throughput(gpu_type, job_type, batch_size, gpu_count):
-    return 1 / cal_iteration_time(gpu_type, job_type, batch_size, gpu_count)
+    return round_len / cal_epoch_time(gpu_type, job_type, batch_size, gpu_count)
 
 
 def allocate(plan, prev_plan):
@@ -173,88 +115,29 @@ def allocate(plan, prev_plan):
     # record host information and worker information respectively in this round
     host_result, host_worker_result = {}, {}
 
-    # process jobs on type by type
+    # variables initialization
     for gpu_type in gpu_types:
-        # list of used hosts
-        used_host_list = []
-        # multi-worker jobs placed on this gpu type in this time
-        multi_worker_jobs = list(filter(lambda j: plan[j]['num'] > 1 and plan[j]['type'] == gpu_type, plan.keys()))
-        # jobs that also have multi (or single) worker in last time slot, indicating elasticity can come into effective
-        multi_worker_jobs_exist_prev = list(
-            filter(lambda j: prev_plan.get(j) and prev_plan[j]['type'] == gpu_type and prev_plan[j]['num'] >= 1,
-                   multi_worker_jobs))
+        for host in hosts_of_each_gpu_type:
+            used_host_worker_nums[host] = 0
+            host_result[host] = []
+            host_worker_result[host] = {}
 
-        # first step: schedule these elastic-able jobs on their original host
-        for j in multi_worker_jobs_exist_prev:
-            # if some multi-worker jobs have occupied this host, then randomly select another one
-            prev_located_host, selected_host = prev_jobs_location[j], None
-            if prev_located_host in used_host_list:
-                selected_host = random.choice(list(set(hosts_of_each_gpu_type[gpu_type]) - set(used_host_list)))
-            else:
-                selected_host = prev_located_host
+    # process jobs type by type
+    for gpu_type in gpu_types:
+        # result[jid] = {'type': job_located_type[jid], 'job_type': available_jobs[jid]['job_type'], 'num': worker_nums[jid], 'bs': available_jobs[jid]['batch_size']}
+        # jobs = list(filter((lambda j: plan[j]['type'] == gpu_type), plan.keys()))
+        # stoppable_jobs = list(filter((lambda j: plan[j]['type'] == gpu_type), prev_plan.keys()))
+        assert len(hosts_of_each_gpu_type[gpu_type]) == 1
 
-            # in case records for this host are not initiated
-            if not host_worker_result.get(selected_host):
-                host_result[selected_host] = []
-                host_worker_result[selected_host] = {}
+        host = hosts_of_each_gpu_type[gpu_type][0]
+        jobs = list(filter((lambda j: plan[j]['type'] == gpu_type), plan.keys()))
 
-            # for each multi-worker jobs should occupy the preceding workers as possible
-            for i in range(plan[j]['num']):
-                host_worker_result[selected_host][i] = j
-            host_result[selected_host].append(j)
-            used_host_list.append(selected_host)
-
-        # second step: jobs that also have multi (or single) worker but not exist in last time slot
-        for j in [j for j in multi_worker_jobs if j not in multi_worker_jobs_exist_prev]:
-            selected_host = random.choice(list(set(hosts_of_each_gpu_type[gpu_type]) - set(used_host_list)))
-            if not host_worker_result.get(selected_host):
-                host_result[selected_host] = []
-                host_worker_result[selected_host] = {}
-            # for each multi-worker jobs should occupy the preceding workers as possible
-            for i in range(plan[j]['num']):
-                host_worker_result[selected_host][i] = j
-            host_result[selected_host].append(j)
-            used_host_list.append(selected_host)
-
-        # prepared for single-worker jobs
-        available_slots_in_hosts = {}
-        for host in hosts_of_each_gpu_type[gpu_type]:
-            available_slots_in_hosts[host] = gpus_each_host - (
-                0 if not host_worker_result.get(host) else len(host_worker_result[host]))
-
-        # single-worker jobs in this time
-        single_worker_jobs = list(filter(lambda j: plan[j]['num'] == 1 and plan[j]['type'] == gpu_type, plan.keys()))
-        for j in single_worker_jobs:
-            # if this single worker job is scheduled in this gpu type in last time slot
-            if prev_plan.get(j) and (prev_jobs_location[j] in hosts_of_each_gpu_type[gpu_type]) and (
-                    available_slots_in_hosts[prev_jobs_location[j]] > 0):
-                # assert that at least one host is available for jobs
-                assert len([h for h in hosts_of_each_gpu_type[gpu_type] if available_slots_in_hosts[h] > 0]) > 0
-
-                selected_host = prev_jobs_location[j]
-                if not host_worker_result.get(selected_host):
-                    host_worker_result[selected_host] = {}
-                    host_result[selected_host] = []
-                host_worker_result[selected_host][len(host_worker_result.get(selected_host))] = j
-                host_result[selected_host].append(j)
-                available_slots_in_hosts[selected_host] -= 1
-
-            else:
-                # assert that at least one host is available for jobs
-                assert len([h for h in hosts_of_each_gpu_type[gpu_type] if available_slots_in_hosts[h] > 0]) > 0
-
-                selected_host = random.choice(
-                    [h for h in hosts_of_each_gpu_type[gpu_type] if available_slots_in_hosts[h] > 0])
-                # selected_worker = len(host_worker_result[selected_host]) if host_worker_result.get(selected_host) else 0
-                # select the min-numbered worker from selected host
-                if not host_worker_result.get(selected_host):
-                    host_result[selected_host] = []
-                    host_worker_result[selected_host] = {}
-
-                selected_worker = len(host_worker_result.get(selected_host))
-                host_result[selected_host].append(j)
-                host_worker_result[selected_host][selected_worker] = j
-                available_slots_in_hosts[selected_host] -= 1
+        count = 0
+        for j in jobs:
+            host_result[host].append(j)
+            for _ in plan[j]['num']:
+                host_worker_result[host][count] = j
+                count += 1
 
     # start control plane
     logging.info(f"t={t}, placement host_worker_result={host_worker_result}")
@@ -309,31 +192,17 @@ def start(j, workers, host):
 
 
 def proceed_placement_for_host(host, host_worker_result, prev_host_worker_result):
-    # map from job to worker for current round and for previous round respectively
-    jobs_info, prev_jobs_info = {}, {}
-    for w, jid in host_worker_result[host].items():
-        if jid not in jobs_info.keys():
-            jobs_info[jid] = []
-        jobs_info[jid].append(w)
+    related_old_jobs = []
+    for j in prev_host_worker_result[host]:
+        if j not in related_old_jobs:
+            related_old_jobs.append(j)
 
-    if prev_host_worker_result.get(host):
-        for w, jid in prev_host_worker_result[host].items():
-            if jid not in prev_jobs_info.keys():
-                prev_jobs_info[jid] = []
-            prev_jobs_info[jid].append(w)
+    stop(related_old_jobs, host)
 
-    for j, workers in jobs_info.items():
-        if workers != prev_jobs_info.get(j):
-            # at first, stop old jobs that occupy the workers used in the new job j
-            related_old_jobs = []
-            if prev_host_worker_result.get(host):
-                for w in workers:
-                    if prev_host_worker_result[host].get(w):
-                        related_old_jobs.append(prev_host_worker_result[host][w])
-
-            related_old_jobs = list(set(related_old_jobs))
-            logging.info(f"for job {j}, {related_old_jobs} should be terminated.")
-            stop(related_old_jobs, host)
+    jobs_info = []
+    for j in host_worker_result[host]:
+        if j not in jobs_info:
+            jobs_info.append(j)
 
     for j, workers in jobs_info.items():
         if workers != prev_jobs_info.get(j):
@@ -356,7 +225,7 @@ def proceed_placement(host_worker_result, prev_host_worker_result):
 
 CLIENT_PORT = 37788
 # length of scheduling window: 300 seconds
-round_len = 60
+round_len = 120
 prev_plan = {}
 all_job_limit = 4
 job_idx = 0
