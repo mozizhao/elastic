@@ -24,6 +24,18 @@ def arrive(t):
     return result
 
 
+def price_j1(jid, gpu_type, num):
+    return 2 * (
+        cal_throughput(gpu_type, available_jobs[jid]['job_type'], available_jobs[jid]['batch_size'], num) -
+        cal_throughput(gpu_type, available_jobs[jid]['job_type'], available_jobs[jid]['batch_size'], num - 1)
+    ) / cal_throughput(gpu_type, available_jobs[jid]['job_type'], available_jobs[jid]['batch_size'], num)
+
+
+def price_j2(jid, gpu_type, slot_size):
+    return cal_throughput(gpu_type, available_jobs[jid]['job_type'], available_jobs[jid]['batch_size'], 1) / \
+           cal_throughput(gpu_type, available_jobs[jid]['job_type'], available_jobs[jid]['batch_size'], slot_size)
+
+
 def schedule():
     # bipartite matching based method, 20230106
     global all_job_limit
