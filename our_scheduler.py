@@ -153,8 +153,8 @@ def allocate(plan, prev_plan):
                 count += 1
 
     # start control plane
-    logging.info(f"t={t}, placement host_worker_result={host_worker_result}")
-    proceed_placement(host_worker_result, prev_host_worker_result)
+    logging.info(f"t={t}, placement host_result={host_result}, host_worker_result={host_worker_result}")
+    proceed_placement(host_result, prev_host_result, host_worker_result, prev_host_worker_result)
 
     # resume three global variables: prev_host_result, prev_host_worker_result, prev_jobs_location
 
@@ -196,38 +196,38 @@ def progress(related_old_jobs, host):
 def start(j, workers, host):
     global available_jobs
     params = {
-        'job_id': j, 'job_type': available_jobs[j]['job_type'], 'batch_size': available_jobs[j]['batch_size'],
-        'progress': available_jobs[j]['progress'], 'workers': workers,
+        'host': host, 'job_id': j, 'job_type': available_jobs[j]['job_type'],
+        'batch_size': available_jobs[j]['batch_size'], 'progress': available_jobs[j]['progress'], 'workers': workers,
     }
-    logging.info(f"send start request with params: jobs={params}")
+    logging.info(f"send start request with params: params={params}")
     ret = requests.post('http://' + host + ':' + str(CLIENT_PORT) + '/start/', json=params)
     assert ret.status_code == 200
 
 
-def proceed_placement_for_host(host, host_worker_result, prev_host_worker_result):
+def proceed_placement_for_host(host, host_result, prev_host_result, host_worker_result, prev_host_worker_result):
     related_old_jobs = []
-    for j in prev_host_worker_result[host]:
-        if j not in related_old_jobs:
-            related_old_jobs.append(j)
+    if prev_host_result.get(host):
+        related_old_jobs = copy.deepcopy(prev_host_result[host])
 
-    if not related_old_jobs:
+    if related_old_jobs:
         stop(related_old_jobs, host)
 
-    jobs_info = []
-    for j in host_worker_result[host]:
+    executable_jobs = copy.deepcopy(host_result[host])
+    jobs_info = {}
+    for j in executable_jobs:
         if j not in jobs_info:
-            jobs_info.append(j)
+            workers = list(filter((lambda w: host_worker_result[w] == j), host_worker_result))
+            jobs_info[j] = workers
 
     for j, workers in jobs_info.items():
-        if workers != prev_jobs_info.get(j):
-            start(j, workers, host)
+        start(j, workers, host)
 
 
-def proceed_placement(host_worker_result, prev_host_worker_result):
+def proceed_placement(host_result, prev_host_result, host_worker_result, prev_host_worker_result):
     # proceed placement host by host
     thread_handlers = []
     for host in host_worker_result:
-        thread = threading.Thread(target=proceed_placement_for_host, args=(host, host_worker_result, prev_host_worker_result))
+        thread = threading.Thread(target=proceed_placement_for_host, args=(host, host_result, prev_host_result, host_worker_result, prev_host_worker_result))
         thread.start()
         thread_handlers.append(thread)
 
