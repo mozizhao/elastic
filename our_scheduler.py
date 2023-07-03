@@ -412,7 +412,7 @@ if __name__ == '__main__':
             prev_plan = copy.deepcopy(plan)
 
             # sleep for round_len of time
-            time.sleep(3)
+            time.sleep(round_len)
 
             # break
         logging.info(job_stats)
