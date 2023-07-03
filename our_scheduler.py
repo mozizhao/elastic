@@ -139,7 +139,8 @@ def allocate(plan, prev_plan):
         # result[jid] = {'type': job_located_type[jid], 'job_type': available_jobs[jid]['job_type'], 'num': worker_nums[jid], 'bs': available_jobs[jid]['batch_size']}
         # jobs = list(filter((lambda j: plan[j]['type'] == gpu_type), plan.keys()))
         # stoppable_jobs = list(filter((lambda j: plan[j]['type'] == gpu_type), prev_plan.keys()))
-        assert len(hosts_of_each_gpu_type[gpu_type]) == 1
+
+        # assert len(hosts_of_each_gpu_type[gpu_type]) == 1
 
         host = hosts_of_each_gpu_type[gpu_type][0]
         jobs = list(filter((lambda j: plan[j]['type'] == gpu_type), plan.keys()))
@@ -209,7 +210,8 @@ def proceed_placement_for_host(host, host_worker_result, prev_host_worker_result
         if j not in related_old_jobs:
             related_old_jobs.append(j)
 
-    stop(related_old_jobs, host)
+    if not related_old_jobs:
+        stop(related_old_jobs, host)
 
     jobs_info = []
     for j in host_worker_result[host]:
@@ -246,7 +248,7 @@ job_stats = {}
 gpus_each_host = 4
 gpu_nums = {'a10': 4, 'v100': 4, 't4': 4, }
 # gpu_types = ['v100', 'a10', 't4', ]
-gpu_types = ['a10', ]
+gpu_types = ['a10', 't4', 'v100', ]
 hosts_of_each_gpu_type = {
     'a10': ['172.22.47.92', ],
     't4': ['172.23.254.151', ],
