@@ -136,18 +136,13 @@ def allocate(plan, prev_plan):
 
     # process jobs type by type
     for gpu_type in gpu_types:
-        # result[jid] = {'type': job_located_type[jid], 'job_type': available_jobs[jid]['job_type'], 'num': worker_nums[jid], 'bs': available_jobs[jid]['batch_size']}
-        # jobs = list(filter((lambda j: plan[j]['type'] == gpu_type), plan.keys()))
-        # stoppable_jobs = list(filter((lambda j: plan[j]['type'] == gpu_type), prev_plan.keys()))
-
-        # assert len(hosts_of_each_gpu_type[gpu_type]) == 1
-
         host = hosts_of_each_gpu_type[gpu_type][0]
         jobs = list(filter((lambda j: plan[j]['type'] == gpu_type), plan.keys()))
 
         count = 0
         for j in jobs:
-            host_result[host].append(j)
+            if j not in host_result[host]:
+                host_result[host].append(j)
             for _ in range(plan[j]['num']):
                 host_worker_result[host][count] = j
                 count += 1
@@ -216,7 +211,7 @@ def proceed_placement_for_host(host, host_result, prev_host_result, host_worker_
     jobs_info = {}
     for j in executable_jobs:
         if j not in jobs_info:
-            workers = list(filter((lambda w: host_worker_result[w] == j), host_worker_result))
+            workers = list(filter((lambda w: host_worker_result[host][w] == j), host_worker_result[host]))
             jobs_info[j] = workers
 
     for j, workers in jobs_info.items():
