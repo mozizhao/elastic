@@ -130,7 +130,7 @@ def allocate(plan, prev_plan):
     # variables initialization
     for gpu_type in gpu_types:
         for host in hosts_of_each_gpu_type:
-            used_host_worker_nums[host] = 0
+            # used_host_worker_nums[host] = 0
             host_result[host] = []
             host_worker_result[host] = {}
 
